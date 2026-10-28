@@ -167,6 +167,7 @@
 #module-gnre-auto input:focus, #module-gnre-auto select:focus{ border-color: var(--accent); }
 #module-gnre-auto input::placeholder{ color: var(--text-sub); opacity: .7; }
 #module-gnre-auto input[type="file"]{ padding: 8px; cursor: pointer; }
+#module-gnre-auto input[type="checkbox"]{ width: auto; padding: 0; accent-color: var(--accent); }
 #module-gnre-auto input[type="date"]{ color-scheme: dark; }
 [data-theme="light"] #module-gnre-auto input[type="date"]{ color-scheme: light; }
 #module-gnre-auto select option{ background: var(--card-bg); color: var(--text-main); }
@@ -345,6 +346,7 @@
 #module-gnre-auto .dare-footer{background:#e8f0fe;border-top:1px solid #c7d7fb;padding:8px 16px;font-size:.62rem;color:#1e3a8a}
 #module-gnre-auto .pix-area{border:1px dashed #003479;padding:8px 12px;margin-top:8px;font-size:.72rem;background:#fff;border-radius:4px}
 #module-gnre-auto .gnre-guide, #module-gnre-auto .dare-guide{background:#fff;color:#1e293b}
+#module-gnre-auto .gnre-totals.has-fecp{grid-template-columns:repeat(5,1fr)}
     </style>
     <!-- CSS original (claro) do módulo, desativado na tela; usado só na janela de impressão das guias -->
     <style id="gnre-auto-print-css" media="not all">
@@ -597,6 +599,8 @@ tfoot td{background:var(--bg);font-weight:700;border-top:2px solid var(--border)
 @media(max-width:980px){.filter-grid{grid-template-columns:1fr 1fr}.results-filters-head{align-items:flex-start}.results-filters-tools{width:100%;justify-content:space-between}}
 @media(max-width:640px){.filter-grid{grid-template-columns:1fr}.filter-date-range{grid-template-columns:1fr}.filter-date-range span{text-align:center}}
 
+
+.gnre-totals.has-fecp{grid-template-columns:repeat(5,1fr)}
 </style>
 </head>
 <body>
@@ -1204,9 +1208,11 @@ tfoot td{background:var(--bg);font-weight:700;border-top:2px solid var(--border)
     </div>
   </div>
   <details class="no-print" style="margin:4px 0 12px;font-size:.8rem">
-    <summary style="cursor:pointer;color:var(--primary);font-weight:700">⚙️ Método do DIFAL por UF de destino</summary>
+    <summary style="cursor:pointer;color:var(--primary);font-weight:700">⚙️ Configurações por UF de destino (método do DIFAL e FECP na mesma guia)</summary>
     <div style="color:var(--muted);margin:8px 0;line-height:1.45">Padrão: <strong>base única</strong> em todas as UFs (Convênio ICMS 236/2021, cláusula 2ª, §1º — operação com consumidor final não contribuinte). Altere apenas se a legislação da UF exigir outro método. Alterações feitas aqui valem até fechar a página; para torná-las permanentes, ajuste a tabela METODO_DIFAL_UF no arquivo.</div>
     <div id="metodo-uf-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px"></div>
+    <div style="color:var(--muted);margin:14px 0 8px;line-height:1.45"><strong>FECP na mesma guia do DIFAL:</strong> marque as UFs em que o Portal GNRE aceita ICMS e FECP numa única guia (receita 10010-2, com os campos “Valor Principal” e “Valor Principal FECP”). Nas demais, o FECP sai em guia separada (receita 10012-9). Alterações feitas aqui valem até fechar esta página.</div>
+    <div id="fecp-guia-uf-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:6px"></div>
   </details>
   <div class="table-wrap">
     <table>
@@ -1251,7 +1257,8 @@ tfoot td{background:var(--bg);font-weight:700;border-top:2px solid var(--border)
     <div class="actions-bar no-print">
       <button class="btn btn-success" onclick="generatePdfGuias()">📄 Gerar PDFs das Guias</button>
       <button class="btn btn-primary" onclick="openGnreAutoModal()">⚡ Emitir GNRE Automática</button>
-      <button class="btn btn-outline" onclick="generateGNReXML()">📦 Baixar XML GNRE (todos os estados)</button>
+      <button class="btn btn-outline" onclick="generateGNReXMLUnico()" title="Um único conjunto de guias com vários estados (dividido em partes de até 50 guias, limite do Portal GNRE)">📦 Baixar lote único (todos os estados)</button>
+      <button class="btn btn-outline" onclick="generateGNReXML()" title="Gera um arquivo separado para cada estado">📦 Baixar lotes por estado</button>
       <button class="btn btn-outline" onclick="window.open('https://www.gnre.pe.gov.br:444/gnre/v/lote/processar','_blank')" title="Abre o portal para envio manual do XML">🌐 Abrir Portal GNRE</button>
       <button class="btn btn-outline" onclick="exportExcelGnreAuto()">📊 Exportar Excel</button>
       <button class="btn btn-outline" onclick="exportCSV()">📄 Exportar CSV</button>
@@ -2975,8 +2982,10 @@ const PRODUTO_GNRE = {
 };
 function hojeISO(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 
-// RJ recolhe ICMS e FECP na mesma GNRE, usando a receita do ICMS e campos de valor separados.
-const FECP_SAME_GUIDE_UF = new Set(['RJ']);
+// UFs em que o Portal GNRE aceita ICMS (DIFAL) e FECP na MESMA guia: usa-se a receita do ICMS (10010-2)
+// com os campos de valor separados ("Valor Principal" e "Valor Principal FECP").
+// Nas demais, o FECP sai em guia própria (receita 10012-9). Pode ser ajustado no painel de configurações por UF.
+const FECP_SAME_GUIDE_UF = new Set(['AL','RJ','SE']);
 
 // Regra operacional desta automação:
 // - a origem é sempre a UF do emitente de cada NF-e;
@@ -3033,6 +3042,15 @@ function renderMetodoUFConfig(){
 // ============================================================
 // INIT
 // ============================================================
+function renderFecpGuiaUFConfig(){
+  const grid=document.getElementById('fecp-guia-uf-grid'); if(!grid) return;
+  grid.innerHTML=Object.keys(STATES).sort().filter(uf=>!MONTHLY_DARE_UF.has(uf)).map(uf=>`<label style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:6px;padding:4px 8px;background:var(--input-bg);cursor:pointer">
+      <input type="checkbox" ${FECP_SAME_GUIDE_UF.has(uf)?'checked':''} onchange="setFecpMesmaGuia('${uf}',this.checked)"><strong>${uf}</strong></label>`).join('');
+}
+function setFecpMesmaGuia(uf, on){
+  if(on) FECP_SAME_GUIDE_UF.add(uf); else FECP_SAME_GUIDE_UF.delete(uf);
+  refreshAfterMethodChange();
+}
 (function init(){
   const s1 = document.getElementById('m-uf-origem');
   const s2 = document.getElementById('m-uf-destino');
@@ -3045,6 +3063,7 @@ function renderMetodoUFConfig(){
   document.getElementById('m-data-saida').value = '';
   document.getElementById('m-venc').value = '';
   renderMetodoUFConfig();
+  renderFecpGuiaUFConfig();
   checkDependencies();
 })();
 
@@ -3347,7 +3366,27 @@ function validationSummary(n){
   return {cls:'status-ok', text:'Apta', title:'Critérios básicos de DIFAL atendidos'};
 }
 
+// Notas importadas de XML: a guia usa EXATAMENTE os valores do XML (totais vICMSUFDest e vFCPUFDest), sem
+// recalcular — evita diferenças de centavos por arredondamento. O valor só é recalculado se o usuário alterar
+// alíquotas/IPI da nota, trocar o método da UF, ou se o XML não trouxer valor (zero/ausente).
+function usaValoresDoXml(n){
+  if(n?.source!=='xml') return false;
+  if(n.aliqInterOverride!=null||n.aliqInternaOverride!=null||n.aliqFecpOverride!=null) return false;
+  if(!!n.incluirIPI!==!!n.incluirIPIOriginal) return false;
+  if((n.metodoXml==='simples'||n.metodoXml==='porDentro') && n.metodoXml!==getMetodoNota(n)) return false;
+  return true;
+}
 function calcNote(n){
+  const r=calcNoteBase(n);
+  if(!r||!r.eligible||!usaValoresDoXml(n)) return r;
+  const dx=n.difalXml, fx=n.fecpXml;
+  const usaD=dx!=null&&dx>0, usaF=fx!=null&&fx>0;
+  if(usaD) r.difal=dx;
+  if(usaF) r.fecp=fx;
+  if(usaD||usaF){ r.total=r.difal+r.fecp; r.valoresDoXml=true; }
+  return r;
+}
+function calcNoteBase(n){
   const d = STATES[n.destUF];
   if(!d) return null;
   const metodo = getMetodoNota(n);
@@ -3641,16 +3680,18 @@ function renderGuias(computed){
   computed.filter(r=>r.eligible && r.vencimento).forEach(r=>{
     if(r.isSpDare){ if(r.difal>0) c.appendChild(buildDareSP(r,'DIFAL',r.difal)); }
     else {
-      if(r.difal>0){
-        if(FECP_SAME_GUIDE_UF.has(r.destUF) && r.fecp>0) c.appendChild(buildGnre(r,'ICMS DIFAL + FECP',GNRE_DIFAL,r.difal+r.fecp));
-        else c.appendChild(buildGnre(r,'ICMS — Consumidor Final não Contribuinte por Operação',GNRE_DIFAL,r.difal));
+      if(FECP_SAME_GUIDE_UF.has(r.destUF)){
+        // ICMS DIFAL + FECP numa única guia (receita do ICMS; "Valor Principal" e "Valor Principal FECP")
+        if(r.difal>0||r.fecp>0) c.appendChild(buildGnre(r,r.fecp>0?'ICMS DIFAL + FECP — mesma guia':'ICMS — Consumidor Final não Contribuinte por Operação',GNRE_DIFAL,r.difal,r.fecp||0));
+      } else {
+        if(r.difal>0) c.appendChild(buildGnre(r,'ICMS — Consumidor Final não Contribuinte por Operação',GNRE_DIFAL,r.difal));
+        if(r.fecp>0) c.appendChild(buildGnre(r,'ICMS — FECP por Operação',GNRE_FECP,r.fecp));
       }
-      if(r.fecp>0 && !FECP_SAME_GUIDE_UF.has(r.destUF)) c.appendChild(buildGnre(r,'ICMS — FECP por Operação',GNRE_FECP,r.fecp));
     }
   });
 }
 
-function buildGnre(r, tipo, codigo, valor){
+function buildGnre(r, tipo, codigo, valor, fecpValor=0){
   const dest = STATES[r.destUF];
   const venc = fmtDate(r.vencimento);
   const periodo = r.data ? r.data.slice(0,7).split('-').reverse().join('/') : '';
@@ -3687,11 +3728,12 @@ function buildGnre(r, tipo, codigo, valor){
         <div class="gnre-field"><div class="gf-label">Alíq. Interna (${r.destUF})</div><div class="gf-value">${pct(r.aliqInterna)}${r.aliqFecp>0?' + '+pct(r.aliqFecp)+' FECP':''}</div></div>
       </div>
     </div>
-    <div class="gnre-totals">
-      <div class="gt-item"><div class="gt-label">Valor Principal</div><div class="gt-value">${fmt(valor)}</div></div>
+    <div class="gnre-totals${fecpValor>0?' has-fecp':''}">
+      <div class="gt-item"><div class="gt-label">Valor Principal${fecpValor>0?' (ICMS DIFAL)':''}</div><div class="gt-value">${fmt(valor)}</div></div>
+      ${fecpValor>0?`<div class="gt-item"><div class="gt-label">Valor Principal FECP</div><div class="gt-value">${fmt(fecpValor)}</div></div>`:''}
       <div class="gt-item"><div class="gt-label">Atualização Monetária</div><div class="gt-value">R$ 0,00</div></div>
       <div class="gt-item"><div class="gt-label">Juros</div><div class="gt-value">R$ 0,00</div></div>
-      <div class="gt-item"><div class="gt-label">TOTAL A PAGAR</div><div class="gt-value total">${fmt(valor)}</div></div>
+      <div class="gt-item"><div class="gt-label">TOTAL A PAGAR</div><div class="gt-value total">${fmt(valor+fecpValor)}</div></div>
     </div>
     <div class="gnre-footer">
       ⚠️ Demonstrativo de cálculo (EC 87/2015 / LC 190/2022). Para emitir com código de barras, acesse:
@@ -4360,7 +4402,7 @@ function buildGNReXMLPayload(ufFiltro=null, skipInvalid=false){
       <itensGNRE><item><receita>${receita}</receita>${detTag}${docTag}${prodTag}
         <referencia><periodo>0</periodo><mes>${mes}</mes><ano>${ano}</ano><parcela>1</parcela></referencia>
         <dataVencimento>${r.vencimento}</dataVencimento>${principal}${fecp}${destTag}${extrasTag}</item></itensGNRE>
-      <valorGNRE>${Number(icmsValue+fecpValue).toFixed(2)}</valorGNRE><dataPagamento>${dataPagto}</dataPagamento><identificadorGuia>${String(seq++).padStart(3,'0')}</identificadorGuia>
+      <valorGNRE>${(Math.round((+Number(icmsValue).toFixed(2)+ +Number(fecpValue).toFixed(2))*100)/100).toFixed(2)}</valorGNRE><dataPagamento>${dataPagto}</dataPagamento><identificadorGuia>${String(seq++).padStart(3,'0')}</identificadorGuia>
     </TDadosGNRE>`;
   };
   validas.forEach(r=>{
@@ -4417,9 +4459,10 @@ function renderUfPanel(){
   const feitos=ufs.filter(uf=>ufDownloads[uf]).length;
   el.innerHTML=`<div class="uf-panel-head">
       <div><div class="uf-panel-title">🗂️ Emissão por estado</div>
-      <div class="uf-panel-sub">${ufs.length} estado(s) · ${totalOk} nota(s) prontas para GNRE · ${feitos}/${ufs.length} lote(s) baixado(s). Baixe um estado por vez e envie em <em>Processar Lote</em> no portal.${modoVencimento==='atraso'?` Pagamento informado nas guias: <strong>${fmtDate(getDataPagamento())}</strong>.`:''}</div></div>
+      <div class="uf-panel-sub">${ufs.length} estado(s) · ${totalOk} nota(s) prontas para GNRE · ${feitos}/${ufs.length} lote(s) baixado(s). Baixe um estado por vez ou use o <strong>lote único</strong> (vários estados no mesmo arquivo) e envie em <em>Processar Lote</em> no portal.${modoVencimento==='atraso'?` Pagamento informado nas guias: <strong>${fmtDate(getDataPagamento())}</strong>.`:''}</div></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button type="button" class="btn btn-outline btn-sm" onclick="window.open('https://www.gnre.pe.gov.br:444/gnre/v/lote/processar','_blank')">🌐 Abrir Portal GNRE</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="generateGNReXMLUnico()">📦 Baixar lote único</button>
         ${feitos?`<button type="button" class="btn btn-outline btn-sm" onclick="ufDownloads={};renderUfPanel()" title="Limpa as marcações de baixado">↺ Limpar marcações</button>`:''}
       </div></div>
     ${ufs.length||sp.length?`<div class="uf-grid">${cards}</div>`:'<div class="uf-panel-sub">Nenhuma nota apta com valor a recolher.</div>'}`;
@@ -4461,6 +4504,55 @@ async function generateGNReXML(ufUnica=null){
   if(gerados.length) msg+=`✅ ${gerados.length} arquivo(s) gerado(s), um por estado:\n\n${gerados.join('\n')}`;
   if(bloqueados.length) msg+=`${msg?'\n\n':''}⚠️ Pendências (notas fora do lote):\n\n${bloqueados.join('\n\n')}`;
   if(spCount && !ufUnica) msg+=`\n\n${spCount} nota(s) de SP ficaram fora por utilizarem DARE-SP.`;
+  if(gerados.length>1) msg+='\n\nSe o navegador perguntar, permita o download de vários arquivos.';
+  renderUfPanel();
+  showAlert(msg);
+}
+
+// Gera UM único lote com guias de vários estados (cada guia leva a sua própria UF favorecida).
+// O Portal GNRE aceita no máximo 50 guias por lote; acima disso o lote único é dividido em partes de 50.
+// DIFAL e FECP saem em guias separadas na maioria das UFs, então 50 guias podem ser menos de 50 notas.
+async function generateGNReXMLUnico(){
+  if(!notes.length){ showAlert('Adicione e calcule as notas antes de gerar o XML da GNRE.'); return; }
+  let payload;
+  try{ payload=buildGNReXMLPayload(null,true); }
+  catch(err){ showAlert(String(err.message||err).replace('Emissão bloqueada por pendências:\n\n','')); return; }
+
+  // Agrupa por UF (ordem alfabética) mantendo a ordem original das guias dentro de cada UF.
+  const ufDe=g=>(g.match(/<ufFavorecida>([A-Z]{2})</)||[])[1]||'';
+  const guias=payload.guias.map((g,i)=>({g,i,uf:ufDe(g)}))
+    .sort((a,b)=>a.uf.localeCompare(b.uf)||a.i-b.i);
+  const partes=[];
+  for(let k=0;k<guias.length;k+=MAX_GUIAS_POR_ARQUIVO) partes.push(guias.slice(k,k+MAX_GUIAS_POR_ARQUIVO));
+
+  const d=new Date(), p2=v=>String(v).padStart(2,'0');
+  const stamp=`${d.getFullYear()}${p2(d.getMonth()+1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+  const hora=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  const gerados=[], ufsPorParte=[];
+  for(let k=0;k<partes.length;k++){
+    // identificadorGuia recomeça em 001 dentro de cada arquivo
+    let seq=1;
+    const xmls=partes[k].map(x=>x.g.replace(/<identificadorGuia>\d+<\/identificadorGuia>/,()=>`<identificadorGuia>${String(seq++).padStart(3,'0')}</identificadorGuia>`));
+    const nome=`gnre_lote_unico_${stamp}${partes.length>1?'_parte'+(k+1):''}.xml`;
+    downloadBlob(wrapLoteGnre(xmls),nome,'application/xml');
+    const ufs=[...new Set(partes[k].map(x=>x.uf))];
+    ufsPorParte.push(ufs);
+    const totalParte=xmls.reduce((s,g)=>s+(+((g.match(/<valorGNRE>([\d.]+)<\/valorGNRE>/)||[])[1]||0)),0);
+    gerados.push(`${nome} — ${xmls.length} guia(s), ${fmt(totalParte)} — UF: ${ufs.join(', ')}`);
+    await new Promise(res=>setTimeout(res,600)); // intervalo para o navegador aceitar vários downloads
+  }
+
+  // Marca no painel as UFs incluídas no lote único (notas aptas por UF).
+  const aptas=getGnreCandidates().filter(r=>!gnreNoteErrors(r).length);
+  const todasUfs=[...new Set(payload.guias.map(ufDe))];
+  todasUfs.forEach(uf=>{
+    ufDownloads[uf]={hora,arquivos:ufsPorParte.filter(u=>u.includes(uf)).length,notas:aptas.filter(r=>r.destUF===uf).length};
+  });
+
+  let msg=`✅ Lote único gerado: ${gerados.length} arquivo(s), ${todasUfs.length} estado(s), ${payload.guiasCount} guia(s).\n\n${gerados.join('\n')}`;
+  if(partes.length>1) msg+=`\n\nO Portal GNRE aceita no máximo ${MAX_GUIAS_POR_ARQUIVO} guias por lote, por isso o lote único foi dividido em ${partes.length} partes. Envie cada parte em "Processar Lote".`;
+  if(payload.skipped.length) msg+=`\n\n⚠️ ${payload.skipped.length} nota(s) ficaram fora do lote por pendência:\n${payload.skipped.slice(0,8).map(x=>`NF ${x.nf} (${x.uf}): ${x.erros.map(t=>t.replace(/^NF [^:]*: /,'')).join('; ')}`).join('\n')}${payload.skipped.length>8?`\n... e mais ${payload.skipped.length-8}`:''}`;
+  if(payload.spCount) msg+=`\n\n${payload.spCount} nota(s) de SP ficaram fora por utilizarem DARE-SP.`;
   if(gerados.length>1) msg+='\n\nSe o navegador perguntar, permita o download de vários arquivos.';
   renderUfPanel();
   showAlert(msg);
