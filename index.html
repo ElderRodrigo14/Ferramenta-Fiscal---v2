@@ -1177,16 +1177,20 @@ tfoot td{background:var(--bg);font-weight:700;border-top:2px solid var(--border)
   <!-- PLANILHA -->
   <div id="tab-planilha" class="tab-content">
     <div class="alert alert-info">
-      ℹ️ Importe uma planilha Excel ou CSV com as notas fiscais.
-      <a href="#" onclick="downloadTemplate();return false" style="color:var(--accent);font-weight:600">📥 Baixar modelo de planilha</a>
+      ℹ️ Importe o <strong>relatório de DIFAL do Sankhya</strong> (.xls, .xlsx ou .csv). São lidos o nº e a chave da NF-e, UF de origem/destino, CPF/CNPJ e nome do destinatário, <strong>Vlr. Nota, Vlr. Difal Dest. e Vlr. FCP</strong> — as guias saem com esses valores exatos. O CNPJ do emitente vem da chave da NF-e. Notas com o DIFAL já pago ficam de fora. O modelo antigo de planilha continua sendo aceito.
     </div>
     <div class="upload-zone" onclick="document.getElementById('csvInput').click()"
          ondragover="event.preventDefault()" ondrop="handleCsvDrop(event)">
       <input type="file" id="csvInput" accept=".xlsx,.xls,.csv" onchange="handleCsvFile(event)">
       <div class="upload-icon">📊</div>
       <div class="upload-title">Arraste o arquivo aqui ou clique para selecionar</div>
-      <div class="upload-sub">Formatos aceitos: .xlsx, .xls, .csv</div>
+      <div class="upload-sub">Relatório do Sankhya — formatos aceitos: .xls, .xlsx, .csv</div>
     </div>
+    <details id="emitentes-details" class="no-print" style="margin-top:14px;font-size:.8rem">
+      <summary style="cursor:pointer;color:var(--primary);font-weight:700">🏢 Dados dos emitentes (endereço, município, CEP e telefone)</summary>
+      <div style="color:var(--muted);margin:8px 0;line-height:1.45">O relatório do Sankhya traz só o Nome Fantasia: o CNPJ do emitente é lido da chave da NF-e, mas razão social, endereço, município (código IBGE), CEP e telefone precisam ser informados <strong>uma vez por CNPJ</strong>. Ficam salvos neste navegador e também são aprendidos automaticamente ao importar um XML do mesmo emitente.</div>
+      <div id="emitentes-grid"><div style="color:var(--muted)">Importe notas para listar os emitentes.</div></div>
+    </details>
   </div>
 </div>
 
@@ -3259,7 +3263,7 @@ function calculateDueDateRule(n){
     return {
       vencimento:orig,
       regime:atrasada?'GNRE em atraso':'GNRE por operação',
-      fonte:saida?'Vencimento original — data de saída da NF-e':'Vencimento original — data de emissão (XML sem data de saída)',
+      fonte:saida?'Vencimento original — data de saída da NF-e':`Vencimento original — data de emissão (${n.source==='sankhya'?'relatório do Sankhya':'XML'} sem data de saída)`,
       revisao:false, aviso:''
     };
   }
@@ -3311,8 +3315,13 @@ function getNoteEligibility(n){
   } else if(n.metodoXml === 'misto') warnings.push('XML com itens calculados por métodos diferentes (base única e base dupla)');
   else if(n.metodoXml === 'divergente') warnings.push('base do DIFAL no XML (vBCUFDest) não corresponde a base única nem a base dupla; confira a nota');
   if(n.source==='pdf') warnings.push('dados extraídos do DANFE exigem conferência manual');
-  if(n.aliqInternaOverride==null && n.aliqInternaDeclarada==null) warnings.push('alíquota interna baseada na tabela modal da UF; confirme conforme NCM/produto');
-  if(n.aliqFecpOverride==null && n.aliqFecpDeclarada==null) warnings.push('FECP baseado na tabela modal da UF; confirme a incidência por produto');
+  if(n.source==='sankhya'){
+    (n.avisosImportacao||[]).forEach(w=>warnings.push(w));
+    if(n.emitNomeFantasia) warnings.push('razão social do emitente veio do Nome Fantasia do relatório; confirme em "Dados dos emitentes"');
+    else if(!emitenteCompleto(n)) warnings.push('dados do emitente incompletos (endereço, município IBGE, CEP, telefone); algumas UFs exigem — preencha em "Dados dos emitentes"');
+  }
+  if(n.source!=='sankhya' && n.aliqInternaOverride==null && n.aliqInternaDeclarada==null) warnings.push('alíquota interna baseada na tabela modal da UF; confirme conforme NCM/produto');
+  if(n.source!=='sankhya' && n.aliqFecpOverride==null && n.aliqFecpDeclarada==null) warnings.push('FECP baseado na tabela modal da UF; confirme a incidência por produto');
   if(!normalizeDigits(n.emitCNPJ) || normalizeDigits(n.emitCNPJ).length !== 14) warnings.push('CNPJ do emitente inválido/ausente');
   const destId = normalizeDigits(n.destCNPJ);
   if(destId && ![11,14].includes(destId.length)) warnings.push('CPF/CNPJ do destinatário inválido');
@@ -3370,7 +3379,7 @@ function validationSummary(n){
 // recalcular — evita diferenças de centavos por arredondamento. O valor só é recalculado se o usuário alterar
 // alíquotas/IPI da nota, trocar o método da UF, ou se o XML não trouxer valor (zero/ausente).
 function usaValoresDoXml(n){
-  if(n?.source!=='xml') return false;
+  if(n?.source!=='xml' && n?.source!=='sankhya') return false;
   if(n.aliqInterOverride!=null||n.aliqInternaOverride!=null||n.aliqFecpOverride!=null) return false;
   if(!!n.incluirIPI!==!!n.incluirIPIOriginal) return false;
   if((n.metodoXml==='simples'||n.metodoXml==='porDentro') && n.metodoXml!==getMetodoNota(n)) return false;
@@ -3380,7 +3389,8 @@ function calcNote(n){
   const r=calcNoteBase(n);
   if(!r||!r.eligible||!usaValoresDoXml(n)) return r;
   const dx=n.difalXml, fx=n.fecpXml;
-  const usaD=dx!=null&&dx>0, usaF=fx!=null&&fx>0;
+  const forca=n.source==='sankhya';
+  const usaD=dx!=null&&(dx>0||forca), usaF=fx!=null&&(fx>0||forca);
   if(usaD) r.difal=dx;
   if(usaF) r.fecp=fx;
   if(usaD||usaF){ r.total=r.difal+r.fecp; r.valoresDoXml=true; }
@@ -3939,6 +3949,7 @@ function parseXml(xml, fname){
   };
   recalcBase(n);
   applyAutomaticDueDate(n,true);
+  emitFromNote(n);
   notes.push(n);
 }
 
@@ -3990,9 +4001,13 @@ function processCsv(file){
   const fr=new FileReader();
   fr.onload=e=>{
     try{
-      let rows=[];
-      if(isCsv){ rows=parseCsvText(String(e.target.result)); }
-      else { const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'}); rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]); }
+      let rows=[], matrix=null, ws=null;
+      if(isCsv){ matrix=parseCsvMatrix(String(e.target.result)); }
+      else { const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'}); ws=wb.Sheets[wb.SheetNames[0]]; matrix=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''}); }
+      const hIdx=sankhyaHeaderIndex(matrix);
+      if(hIdx>=0){ importSankhya(matrix,hIdx); return; }   // relatório do Sankhya
+      // modelo antigo de planilha
+      if(isCsv) rows=parseCsvText(String(e.target.result)); else rows=XLSX.utils.sheet_to_json(ws);
       let ok=0;
       rows.forEach(row=>{
         const origUF=String(row['UF Origem']||row['uf_origem']||'').toUpperCase().trim();
@@ -4022,6 +4037,159 @@ function processCsv(file){
   if(isCsv) fr.readAsText(file,'UTF-8'); else fr.readAsArrayBuffer(file);
 }
 
+
+// ============================================================
+// RELATÓRIO DO SANKHYA (DIFAL) — importação de .xls / .xlsx / .csv
+// O relatório traz o DIFAL e o FCP já calculados: as guias saem com esses valores exatos.
+// Não traz dados cadastrais do emitente: o CNPJ vem da chave da NF-e e o restante, do cadastro de emitentes.
+// ============================================================
+const EMIT_KEY='gnreEmitentesV1';
+function emitReg(){ try{ return JSON.parse(localStorage.getItem(EMIT_KEY)||'{}')||{}; }catch(e){ return {}; } }
+function emitRegSave(reg){ try{ localStorage.setItem(EMIT_KEY,JSON.stringify(reg)); }catch(e){} }
+function emitenteCompleto(n){
+  return !!(String(n.emitNome||'').trim() && String(n.emitEndereco||'').trim()
+    && normalizeDigits(n.emitMunicipio).length>=5 && normalizeDigits(n.emitCEP).length===8
+    && normalizeDigits(n.emitTelefone).length>=6);
+}
+// Aprende o emitente a partir de um XML importado (dados oficiais da NF-e).
+function emitFromNote(n){
+  const c=normalizeDigits(n.emitCNPJ); if(c.length!==14) return;
+  const reg=emitReg(), cur=reg[c]||{};
+  reg[c]={nome:n.emitNome||cur.nome||'', endereco:n.emitEndereco||cur.endereco||'',
+          municipio:normalizeDigits(n.emitMunicipio)||cur.municipio||'', cep:normalizeDigits(n.emitCEP)||cur.cep||'',
+          telefone:normalizeDigits(n.emitTelefone)||cur.telefone||''};
+  emitRegSave(reg);
+}
+function aplicarEmitente(n){
+  const r=emitReg()[normalizeDigits(n.emitCNPJ)]; if(!r) return;
+  if(r.nome){ n.emitNome=r.nome; n.emitNomeFantasia=false; }
+  n.emitEndereco=r.endereco||n.emitEndereco||''; n.emitMunicipio=r.municipio||n.emitMunicipio||'';
+  n.emitCEP=r.cep||n.emitCEP||''; n.emitTelefone=r.telefone||n.emitTelefone||'';
+}
+
+function sankhyaNorm(s){ return String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+function sankhyaHeaderIndex(matrix){
+  for(let i=0;i<Math.min(matrix.length,15);i++){
+    const h=(matrix[i]||[]).map(sankhyaNorm);
+    if(h.includes('nro nota') && h.includes('chave nf e') && h.includes('vlr difal dest')) return i;
+  }
+  return -1;
+}
+function sankhyaDate(v){
+  if(typeof v==='number' && v>20000) return new Date(Math.round((v-25569)*864e5)).toISOString().slice(0,10); // data serial do Excel
+  if(v instanceof Date) return v.toISOString().slice(0,10);
+  const s=String(v??'').trim(); if(!s) return '';
+  const m=s.match(/^(\d{2})\/(\d{2})\/(\d{4})/); if(m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return normalizeDate(s);
+}
+function sankhyaStatusNFe(s){
+  const t=sankhyaNorm(s); if(!t) return null;
+  if(/aprovad|autoriz/.test(t)) return '100';
+  if(/cancel/.test(t)) return '101';
+  if(/deneg/.test(t)) return '110';
+  return String(s).trim();
+}
+function parseCsvMatrix(txt){
+  const lines=txt.replace(/^\uFEFF/,'').split(/\r?\n/).filter(l=>l.trim());
+  if(!lines.length) return [];
+  const amostra=lines.slice(0,6).join('\n');
+  const sep=(amostra.match(/;/g)||[]).length>=(amostra.match(/,/g)||[]).length?';':',';
+  const parseLine=line=>{ const out=[]; let cur='',q=false; for(let i=0;i<line.length;i++){ const ch=line[i]; if(ch==='"'){ if(q&&line[i+1]==='"'){cur+='"';i++;} else q=!q; } else if(ch===sep&&!q){out.push(cur.trim());cur='';} else cur+=ch; } out.push(cur.trim()); return out; };
+  return lines.map(parseLine);
+}
+
+function importSankhya(matrix,hIdx){
+  const hdr=matrix[hIdx].map(sankhyaNorm);
+  const C={nota:'nro nota',data:'data de venda',uo:'uf origem',ud:'uf destino',chave:'chave nf e',parceiro:'nome parceiro',
+    cls:'class icms',doc:'cpf cnpj',vnota:'vlr nota',dd:'vlr difal dest',fcp:'vlr fcp',tot:'vlr total do difal',
+    lanc:'vlr difal lancado',pago:'vlr difal pago',aberto:'vlr difal em aberto',status:'status nf e',fant:'nome fantasia',
+    sdif:'status do difal',div:'diverg nota x finan'};
+  Object.keys(C).forEach(k=>C[k]=hdr.indexOf(C[k]));
+  const obrig={nota:'Nro. nota',data:'Data de venda',uo:'UF Origem',ud:'UF Destino',chave:'Chave NF-e',vnota:'Vlr. Nota',dd:'Vlr. Difal Dest.',fcp:'Vlr. FCP'};
+  const faltam=Object.keys(obrig).filter(k=>C[k]<0).map(k=>obrig[k]);
+  if(faltam.length){ alert(`❌ O relatório do Sankhya não tem a(s) coluna(s): ${faltam.join(', ')}.`); return; }
+
+  const chaves=new Set(notes.map(n=>normalizeDigits(n.chNFe)).filter(c=>c.length===44));
+  const novas=[], dup=[], quitadas=[], ignoradas=[];
+  for(let i=hIdx+1;i<matrix.length;i++){
+    const row=matrix[i]||[], g=k=>C[k]>=0?row[C[k]]:'';
+    const nfRaw=g('nota'); const nf=typeof nfRaw==='number'?String(Math.round(nfRaw)):String(nfRaw??'').trim().replace(/[.,]0+$/,''); // 7370 | "7370,00" -> "7370"
+    if(!nf) continue; // linha de totais / em branco
+    const origUF=String(g('uo')).toUpperCase().trim(), destUF=String(g('ud')).toUpperCase().trim();
+    if(!STATES[origUF]||!STATES[destUF]||origUF===destUF){ ignoradas.push(`NF ${nf}: UF de origem/destino inválida ou operação interna`); continue; }
+    const chNFe=normalizeDigits(g('chave'));
+    if(chNFe.length===44 && chaves.has(chNFe)){ dup.push(nf); continue; }
+    const vNota=toNumberBR(g('vnota')), difal=toNumberBR(g('dd')), fecp=toNumberBR(g('fcp'));
+    const total=C.tot>=0&&g('tot')!==''?toNumberBR(g('tot')):difal+fecp;
+    const lanc=C.lanc>=0&&g('lanc')!==''?toNumberBR(g('lanc')):null;
+    const pago=C.pago>=0?toNumberBR(g('pago')):0;
+    const aberto=C.aberto>=0&&g('aberto')!==''?toNumberBR(g('aberto')):null;
+    const sdif=String(g('sdif')||'').trim();
+    if(difal<=0 && fecp<=0){ ignoradas.push(`NF ${nf}: sem DIFAL/FCP no relatório`); continue; }
+    if((pago>0 && aberto!=null && aberto<=0.004) || /^(pago|quitado|baixado)$/i.test(sdif)){ quitadas.push(nf); continue; }
+    const avisos=[];
+    if(aberto!=null && aberto>0.004 && aberto<total-0.004) avisos.push(`DIFAL pago parcialmente no Sankhya (em aberto ${fmt(aberto)} de ${fmt(total)}); a guia usa o valor total — confira`);
+    if(lanc!=null && lanc<=0.004) avisos.push('DIFAL ainda não lançado no financeiro do Sankhya');
+    const dv=C.div>=0&&g('div')!==''?toNumberBR(g('div')):0;
+    if(Math.abs(dv)>0.004) avisos.push(`divergência entre nota e financeiro no Sankhya (${fmt(dv)})`);
+    const cls=sankhyaNorm(g('cls'));
+    const contribuinte=/contribuinte/.test(cls)&&!/nao contribuinte/.test(cls);
+    const n={
+      id:idSeq++, nf, data:sankhyaDate(g('data')), dataSaida:'', vencimento:'', vencimentoManual:false,
+      emitCNPJ:chNFe.length===44?chNFe.slice(6,20):'', emitNome:String(g('fant')||'').trim(), emitNomeFantasia:true,
+      emitEndereco:'', emitMunicipio:'', emitCEP:'', emitTelefone:'', origUF, destUF,
+      destCNPJ:normalizeDigits(g('doc')), destNome:String(g('parceiro')||'').trim(), destMunicipio:'',
+      vProd:vNota, vFrete:0, vSeg:0, vOutro:0, vDesc:0, vIPI:0, incluirIPI:false, incluirIPIOriginal:false, bc:0,
+      bcDeclarada:null, bcGroups:null, metodoXml:null,
+      aliqInterOverride:null, aliqInterDeclarada:null, aliqInternaOverride:null, aliqInternaDeclarada:null, aliqFecpOverride:null, aliqFecpDeclarada:null,
+      origCode:'0', source:'sankhya', difalXml:difal, fecpXml:fecp, avisosImportacao:avisos,
+      contribuinte, indFinal:'1', indIEDest:contribuinte?'1':'9', idDest:'2', finNFe:'1', tpNF:'1', statusNFe:sankhyaStatusNFe(g('status')),
+      chNFe, tipoDocOrigem:docTypeFor('100102',destUF,'22'), cfops:[]
+    };
+    aplicarEmitente(n);
+    recalcBase(n);
+    applyAutomaticDueDate(n,true);
+    notes.push(n); novas.push(n); if(chNFe.length===44) chaves.add(chNFe);
+  }
+  updateList(); if(novas.length) calculate();
+  const incompletos=[...new Set(novas.filter(n=>!emitenteCompleto(n)).map(n=>normalizeDigits(n.emitCNPJ)))].length;
+  renderEmitentesPanel(incompletos>0);
+  let msg=novas.length?`✅ ${novas.length} nota(s) importada(s) do relatório do Sankhya com o DIFAL/FCP do relatório. ${modoVencimento==='atraso'?`Modo atraso: vencimento original de cada nota, pagamento em ${fmtDate(getDataPagamento())}.`:`Vencimento: ${fmtDate(proximoDiaUtilISO(hojeISO()))} (próximo dia útil).`}`:'Nenhuma nota nova foi importada.';
+  if(dup.length) msg+=`\n\n↩️ ${dup.length} nota(s) já estavam na lista (mesma chave): ${dup.slice(0,10).join(', ')}${dup.length>10?'…':''}.`;
+  if(quitadas.length) msg+=`\n\n✔️ ${quitadas.length} nota(s) ficaram de fora por já terem o DIFAL pago: ${quitadas.slice(0,10).join(', ')}${quitadas.length>10?'…':''}.`;
+  if(ignoradas.length) msg+=`\n\n⚠️ ${ignoradas.length} linha(s) ignorada(s):\n${ignoradas.slice(0,10).join('\n')}${ignoradas.length>10?`\n... e mais ${ignoradas.length-10}`:''}`;
+  if(incompletos) msg+=`\n\n🏢 ${incompletos} emitente(s) sem endereço, município (IBGE), CEP e telefone — o relatório não traz esses dados. Preencha uma vez em "Dados dos emitentes" (abaixo da área de upload); ficam salvos neste navegador.`;
+  alert(msg);
+  const inp=document.getElementById('csvInput'); if(inp) inp.value='';
+}
+
+function renderEmitentesPanel(abrir){
+  const el=document.getElementById('emitentes-grid'); if(!el) return;
+  const cnpjs=[...new Set(notes.map(n=>normalizeDigits(n.emitCNPJ)).filter(c=>c.length===14))];
+  if(!cnpjs.length){ el.innerHTML='<div style="color:var(--muted)">Importe notas para listar os emitentes.</div>'; return; }
+  const fmtCnpj=c=>c.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,'$1.$2.$3/$4-$5');
+  el.innerHTML='<div class="table-wrap"><table><thead><tr><th>CNPJ</th><th>Razão social</th><th>Endereço</th><th>Município (IBGE)</th><th>CEP</th><th>Telefone</th></tr></thead><tbody>'
+    +cnpjs.map(c=>{
+      const n=notes.find(x=>normalizeDigits(x.emitCNPJ)===c);
+      const inp=(campo,v,ph,w)=>`<input class="inline-input" style="width:${w}px" value="${escHtml(v||'')}" placeholder="${ph}" onchange="setEmitenteCampo('${c}','${campo}',this.value)">`;
+      return `<tr><td>${fmtCnpj(c)}</td><td>${inp('nome',n.emitNome,'Razão social',240)}${n.emitNomeFantasia?`<div class="date-source" id="hint-nome-${c}">vindo do Nome Fantasia do relatório — confirme</div>`:''}</td>`
+        +`<td>${inp('endereco',n.emitEndereco,'Rua, nº, bairro',280)}</td><td>${inp('municipio',n.emitMunicipio,'ex.: 3205309',112)}</td><td>${inp('cep',n.emitCEP,'00000000',108)}</td><td>${inp('telefone',n.emitTelefone,'DDD + número',130)}</td></tr>`;
+    }).join('')+'</tbody></table></div>';
+  if(abrir){ const d=document.getElementById('emitentes-details'); if(d) d.open=true; }
+}
+function setEmitenteCampo(cnpj,campo,valor){
+  const v=(campo==='nome'||campo==='endereco')?String(valor).trim():normalizeDigits(valor);
+  const reg=emitReg(), cur=reg[cnpj]||{}; cur[campo]=v; reg[cnpj]=cur; emitRegSave(reg);
+  notes.filter(n=>normalizeDigits(n.emitCNPJ)===cnpj).forEach(n=>{
+    if(campo==='nome'){ n.emitNome=v; n.emitNomeFantasia=false; }
+    else if(campo==='endereco') n.emitEndereco=v;
+    else if(campo==='municipio') n.emitMunicipio=v;
+    else if(campo==='cep') n.emitCEP=v;
+    else if(campo==='telefone') n.emitTelefone=v;
+  });
+  if(campo==='nome') document.getElementById('hint-nome-'+cnpj)?.remove();
+  refreshAfterMethodChange();
+}
 
 function parseCsvText(txt){
   const lines=txt.replace(/^\uFEFF/,'').split(/\r?\n/).filter(l=>l.trim());
