@@ -2052,8 +2052,21 @@ tfoot td{background:var(--bg);font-weight:700;border-top:2px solid var(--border)
             const data = new Uint8Array(e.target.result);
             const workbook = XLSX.read(data, {type: 'array'});
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            const json = XLSX.utils.sheet_to_json(sheet, {defval: ""});
-            
+            // O relatório do Sankhya traz linhas de título ("arquivo", "Emissão: ...") ANTES do cabeçalho.
+            // Em vez de assumir que o cabeçalho é a 1ª linha, localizamos a linha que contém "Nro. nota".
+            const matriz = XLSX.utils.sheet_to_json(sheet, {header: 1, raw: true, defval: ""});
+            const normCab = s => String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const idxCab = matriz.slice(0, 20).findIndex(l => l.some(c => normCab(c) === 'nro nota'));
+            let json;
+            if (idxCab >= 0) {
+                const cab = matriz[idxCab].map(c => String(c).trim());
+                json = matriz.slice(idxCab + 1)
+                    .filter(l => l.some(c => c !== ''))
+                    .map(l => { const o = {}; cab.forEach((h, i) => { if (h) o[h] = l[i] === undefined ? '' : l[i]; }); return o; });
+            } else {
+                json = XLSX.utils.sheet_to_json(sheet, {defval: ""});   // planilha simples, cabeçalho na 1ª linha
+            }
+
             if (json.length === 0) { alert("Planilha vazia ou formato não reconhecido."); return; }
 
             dadosDifalMensal = [];
@@ -2079,6 +2092,10 @@ tfoot td{background:var(--bg);font-weight:700;border-top:2px solid var(--border)
                 dadosDifalMensal.push({ nota, data: dataVenda, cliente, uf, vlrNota, vlrDifal });
             });
 
+            if (dadosDifalMensal.length === 0) {
+                alert('Nenhuma nota foi reconhecida na planilha. Confira se ela tem as colunas "Nro. nota", "Vlr. Nota" e "Vlr. total do DIFAL" (relatório "Relação de Notas" do Sankhya).');
+                return;
+            }
             if (!totaisDifalMensal.empresa) totaisDifalMensal.empresa = 'KADRI TECNOLOGIA';
             renderizarTabelaDifalMensal();
         };
