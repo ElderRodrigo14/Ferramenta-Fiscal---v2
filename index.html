@@ -134,6 +134,26 @@
         .badge-status.ok { background: var(--success-bg); color: var(--success); border-color: rgba(129,201,149,0.3); }
         .badge-warning { background: var(--warning-bg); color: var(--warning); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-left: 8px; display: inline-block;}
     </style>
+    <style id="linha-ativa-css">
+        /* Linha de item selecionada (Importar XML): verde neon bem fraco; o texto mantém a cor original */
+        :root { --neon-rgb: 57, 255, 20; }
+        [data-theme="light"] { --neon-rgb: 0, 185, 70; }
+        .itens-nota-container tbody tr { cursor: pointer; }
+        .itens-nota-container tbody tr.linha-ativa { box-shadow: 0 0 14px rgba(var(--neon-rgb), 0.22); }
+        .itens-nota-container tbody tr.linha-ativa td {
+            background-color: rgba(var(--neon-rgb), 0.075);
+            box-shadow: inset 0 1px 0 rgba(var(--neon-rgb), 0.30), inset 0 -1px 0 rgba(var(--neon-rgb), 0.30);
+        }
+        .itens-nota-container tbody tr.linha-ativa td:first-child {
+            box-shadow: inset 3px 0 0 rgb(var(--neon-rgb)), inset 0 1px 0 rgba(var(--neon-rgb), 0.30), inset 0 -1px 0 rgba(var(--neon-rgb), 0.30);
+        }
+        .itens-nota-container tbody tr.linha-ativa td:last-child {
+            box-shadow: inset -1px 0 0 rgba(var(--neon-rgb), 0.30), inset 0 1px 0 rgba(var(--neon-rgb), 0.30), inset 0 -1px 0 rgba(var(--neon-rgb), 0.30);
+        }
+        /* o "piscar" ao copiar volta para a cor da seleção (e não para transparente) */
+        @keyframes flashRowAtiva { 0% { background-color: var(--success-bg); } 100% { background-color: rgba(var(--neon-rgb), 0.075); } }
+        .itens-nota-container tbody tr.linha-ativa.flash-row td { animation-name: flashRowAtiva; }
+    </style>
     <style id="gnre-auto-css">
 /* ===== GNRE DIFAL Automática — estilos isolados no módulo (tema do projeto) ===== */
 #module-gnre-auto{
@@ -1689,7 +1709,7 @@ tfoot td{background:var(--bg);font-weight:700;border-top:2px solid var(--border)
         const container = document.getElementById('notas-container'); container.innerHTML = '';
         notasFiscais.forEach(nota => {
             const htmlItens = nota.itens.map(it => `
-                <tr><td>${it.item}</td><td>${it.qCom}</td><td>${it.ncm}</td><td>${it.cest}</td><td>R$ ${it.vProd.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+                <tr data-nota="${nota.id}" data-item="${it.item}"><td>${it.item}</td><td>${it.qCom}</td><td>${it.ncm}</td><td>${it.cest}</td><td>R$ ${it.vProd.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
                     <td>R$ ${it.vBC_icms.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
                     <td><div class="val-container">R$ ${it.baseST.toLocaleString('pt-BR',{minimumFractionDigits:2})} ${it.baseST > 0 ? `<button class="icon-btn" onclick="copiarParaArea(${it.baseST}, this)" title="Copiar">${svgCopy}</button>` : ''}</div></td>
                     <td><strong style="color:var(--warning);">R$ ${it.creditoICMS.toLocaleString('pt-BR',{minimumFractionDigits:2})}</strong></td>
@@ -1734,9 +1754,27 @@ tfoot td{background:var(--bg);font-weight:700;border-top:2px solid var(--border)
                 </div>`;
             container.appendChild(card);
         });
+        aplicarLinhaAtiva();
     }
 
-    function limparNotas() { notasFiscais = []; renderizarNotas(); }
+    function limparNotas() { notasFiscais = []; linhaAtivaXml = null; renderizarNotas(); }
+
+    // Linha de item destacada ao clicar (ajuda a não se perder na conferência). Esc remove o destaque.
+    let linhaAtivaXml = null;   // { nota, item } — sobrevive a novas importações (a tabela é redesenhada)
+    function aplicarLinhaAtiva() {
+        const c = document.getElementById('notas-container');
+        c.querySelectorAll('tr.linha-ativa').forEach(r => r.classList.remove('linha-ativa'));
+        if (!linhaAtivaXml) return;
+        const tr = c.querySelector(`tr[data-nota="${linhaAtivaXml.nota}"][data-item="${linhaAtivaXml.item}"]`);
+        if (tr) tr.classList.add('linha-ativa');
+    }
+    document.getElementById('notas-container').addEventListener('click', (e) => {
+        const tr = e.target.closest('.itens-nota-container tbody tr');
+        if (!tr || !tr.dataset.nota) return;
+        linhaAtivaXml = { nota: tr.dataset.nota, item: tr.dataset.item };
+        aplicarLinhaAtiva();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && linhaAtivaXml) { linhaAtivaXml = null; aplicarLinhaAtiva(); } });
 
     function imprimirNota(id) {
         const nota = notasFiscais.find(n => n.id === id);
